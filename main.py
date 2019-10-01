@@ -18,10 +18,10 @@ from sklearn.svm import SVC
 from sklearn.metrics import classification_report, accuracy_score, confusion_matrix
 from sklearn.ensemble import VotingClassifier
 
-from nltk.corpus import stopwords, wordnet
-from nltk.tokenize import word_tokenize
-from nltk.stem import WordNetLemmatizer
 from nltk.classify.scikitlearn import SklearnClassifier
+
+from Normalizer import TextNormalizer
+from Vectorizer import TextVectorizer
 
 
 # check imports
@@ -43,112 +43,37 @@ print(dataframe.info())
 # check class distribution
 smscategory = dataframe[0]
 smscontent = dataframe[1]
-#print(smscategory.value_counts())
+print(smscategory.value_counts())
 
 # convert class labels to binary value (0 = ham, 1 = spam)
 encoder = LabelEncoder()
 contentLabel = encoder.fit_transform(smscategory)
+print('Label Volume: %s' % len(contentLabel))
 #print('First 10 Category Labels: %s' % (contentLabel[:10]))
 
-# pre-process smscontent data
-## use regex to replace distinct attributes
-### (emailaddr = Email Address in text)
-contentProcessed = smscontent.str.replace('[^ ]+@[a-z]+\.[a-z]+(\.[a-z]+)*', 'emailaddr')
+# normalize smscontent data
+normalizer = TextNormalizer(smscontent)
+normalizedContent = normalizer.normalize()
+#print(normalizedContent[:10])
+#print(normalizedContent[518])
 
-### (webaddr = http Web Address in text)
-contentProcessed = contentProcessed.str.replace('(http://|https://)[^ ]+', 'webaddr')
+# vectorize smscontent data
+vectorizer = TextVectorizer(normalizedContent, True)
+vectorizer.buildVocabulary(2000)
 
-### (moneysymb = Money Symbols in text)
-contentProcessed = contentProcessed.str.replace('£|\$|₹', 'moneysymb')
-
-### (phonenumbr = Phone Numbers in text)
-contentProcessed = contentProcessed.str.replace('(\+\d{12}|\d{10})', 'phonenumbr')
-
-### (othernumbr = Numbers in text)
-contentProcessed = contentProcessed.str.replace('\d+(\.\d+)?', 'othernumbr')
-
-## remove punctuation marks
-contentProcessed = contentProcessed.str.replace('[^\w\d\s]', ' ')
-
-## replace multiple whiatespace with single whitespace
-contentProcessed = contentProcessed.str.replace('\s+', ' ')
-
-## remove leading and trailing whaitespace
-contentProcessed = contentProcessed.str.strip()
-
-## change to lowercase
-contentProcessed = contentProcessed.str.lower()
-
-## function to wordnet pos from nltk pos tags 
-def getWordnetPOSWithToken(sentence):
-    dict_wordnetpostags = {'J': wordnet.ADJ,
-    'N': wordnet.NOUN,
-    'V': wordnet.VERB,
-    'R': wordnet.ADV
-    }
-    result = []
-    tokenpostags = nltk.pos_tag(nltk.word_tokenize(sentence))
-    for postag in tokenpostags:
-        wordnetpostag = dict_wordnetpostags.get(postag[1][0], wordnet.NOUN)
-        result.append((postag[0], wordnetpostag))
-    return result
-
-## apply word lemmatization
-lemmatizer = WordNetLemmatizer()
-contentProcessed = contentProcessed.apply(lambda x: ' '.join(lemmatizer.lemmatize(elem[0], pos=elem[1]) for elem in getWordnetPOSWithToken(x)))
-
-## remove stop words
-set_stopwords = set(stopwords.words('english'))
-set_stopwords.update(['u', 'urs', 'u\'ve', 'urself', 'u\'d', 'u\'ll', 'urselves', 'ur', 'u\'re'])
-contentProcessed = contentProcessed.apply(lambda x: ' '.join(token for token in x.split() if token not in set_stopwords))
-
-## apply word stemming
-#stemmer = nltk.PorterStemmer()
-#contentProcessed = contentProcessed.apply(lambda x: ' '.join(stemmer.stem(token) for token in x.split()))
-
-#print(contentProcessed[:10])
-#print(contentProcessed[518])
-
-# build bag-of-words
-list_contentwords = []
-for content in contentProcessed:
-    words = word_tokenize(content)
-    for w in words:
-        list_contentwords.append(w)
-
-# apply frequency Frequency Distribution
-list_contentwords = nltk.FreqDist(list_contentwords)
-
-#print('Number of Words from Processed Content: %s' % (len(list_contentwords)))
-#print('20 Most Common Words: %s' % (list_contentwords.most_common(20)))
-
-# use 2000 most common words as featureset
-list_commonwords = list_contentwords.most_common(2000)
-#list_commonwords = list(map(lambda x: x[0], list_commonwords))
-lcmwText, lcmwCount = zip(*list_commonwords)
-list_commonwords = list(lcmwText)
-
-# function to run through the common words list and set true/false on message words
-def buildFeatures(message):
-    words = word_tokenize(message)
-    result = {}
-    for word in list_commonwords:
-        result[word] = (word in words)
-    return result
-
-# build dataset for sklearn
-tmpFeatureset = list(zip(contentProcessed, contentLabel))
+# build featureset for training
+tmpFeatureset = list(zip(normalizedContent, contentLabel))
 seed = 1
 numpy.random.seed = seed
 numpy.random.shuffle(tmpFeatureset)
-featureset = [(buildFeatures(content), label) for (content, label) in tmpFeatureset]
-print('Feature: %s' % len(featureset))
-#print(featureset[0])
+featureset = [(vectorizer.transform(content), label) for (content, label) in tmpFeatureset]
+print('Feature Volume: %s' % len(featureset))
+#print('First 10 Category Labels: %s' % featureset[:10])
 
 # split training & testing dataset
 trainingset, testingset = model_selection.train_test_split(featureset, test_size=0.25, random_state=seed)
-print('Training: %s' % len(trainingset))
-print('Testing: %s' % len(testingset))
+print('Training Volume: %s' % len(trainingset))
+print('Testing Volume: %s' % len(testingset))
 
 # Scikit-learn Classifiers with NLTK
 ## define training models
@@ -184,7 +109,7 @@ models = list(zip(names, classifiers))
 #    accuracy = nltk.classify.accuracy(nltk_model, testingset) * 100
 #    print('%s: accuracy - %s' % (name, accuracy))
 
-## wrap models using ensemble method & train using SklearnClassifier
+## wrap models using ensemble method & train using SklearnClassifier/Voting Classifier
 nltk_ensemble = SklearnClassifier(VotingClassifier(estimators=models, voting='hard', n_jobs=-1))
 nltk_ensemble.train(trainingset)
 accuracy = nltk.classify.accuracy(nltk_ensemble, testingset) * 100
@@ -207,4 +132,4 @@ print(actual_to_predicted.head())
 
 # save the trained nltk model as a pickle in SMSSpamFilter_model.pkl
 #joblib.dump(nltk_model, 'SMSSpamFilter_model.pkl')
-joblib.dump(nltk_ensemble, 'SMSSpamFilter_model_01.pkl')
+joblib.dump(nltk_ensemble, 'SMSSpamFilter_model.pkl')
